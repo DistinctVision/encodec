@@ -291,7 +291,9 @@ class VectorQuantization(nn.Module):
         quantize = rearrange(quantize, "b n d -> b d n")
         return quantize
 
-    def forward(self, x):
+    def forward(self,
+                x: torch.Tensor,
+                calculate_loss: bool = False) -> tp.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         device = x.device
         x = rearrange(x, "b d n -> b n d")
         x = self.project_in(x)
@@ -303,10 +305,7 @@ class VectorQuantization(nn.Module):
 
         loss = torch.tensor([0.0], device=device, requires_grad=self.training)
 
-        if self.training:
-            warnings.warn('When using RVQ in training model, first check '
-                          'https://github.com/facebookresearch/encodec/issues/25 . '
-                          'The bug wasn\'t fixed here for reproducibility.')
+        if calculate_loss:
             if self.commitment_weight > 0:
                 commit_loss = F.mse_loss(quantize.detach(), x)
                 loss = loss + commit_loss * self.commitment_weight
@@ -326,7 +325,10 @@ class ResidualVectorQuantization(nn.Module):
             [VectorQuantization(**kwargs) for _ in range(num_quantizers)]
         )
 
-    def forward(self, x, n_q: tp.Optional[int] = None):
+    def forward(self,
+                x: torch.Tensor,
+                n_q: tp.Optional[int] = None,
+                calculate_loss: bool = False) -> tp.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         quantized_out = 0.0
         residual = x
 
@@ -336,7 +338,7 @@ class ResidualVectorQuantization(nn.Module):
         n_q = n_q or len(self.layers)
 
         for layer in self.layers[:n_q]:
-            quantized, indices, loss = layer(residual)
+            quantized, indices, loss = layer(residual, calculate_loss=calculate_loss)
             residual = residual - quantized
             quantized_out = quantized_out + quantized
 
@@ -353,7 +355,7 @@ class ResidualVectorQuantization(nn.Module):
         for layer in self.layers[:n_q]:
             indices = layer.encode(residual)
             quantized = layer.decode(indices)
-            residual = residual - quantized
+            residual = residual - quantized.detach()
             all_indices.append(indices)
         out_indices = torch.stack(all_indices)
         return out_indices
